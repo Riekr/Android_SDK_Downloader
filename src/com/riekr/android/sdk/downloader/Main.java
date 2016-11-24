@@ -23,7 +23,6 @@ import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.util.List;
 
@@ -216,6 +215,7 @@ public class Main implements Runnable {
 				", _verbose=" + _verbose +
 				", _obsolete=" + _obsolete +
 				", _destPath='" + _destPath + '\'' +
+				", _lock=" + _lock +
 				'}';
 	}
 }
