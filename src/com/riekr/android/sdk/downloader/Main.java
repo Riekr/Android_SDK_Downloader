@@ -46,10 +46,10 @@ public class Main implements Runnable {
 	@Option(name = "--dry-run", usage = "Dumps only urls, does not download anything")
 	private boolean _dryRun = false;
 
-	@Option(name = "--xml-repository", usage = "Specify repository file with version (eg: repository-11.xml)")
+	@Option(name = "--xml-repository", usage = "Specify repository file with version")
 	private String _repositoryXml = "repository-11.xml";
 
-	@Option(name = "--xml-addons", usage = "Specify addons list file with version (eg: addons_list-2.xml)")
+	@Option(name = "--xml-addons", usage = "Specify addons list file with version")
 	private String _addonsXml = "addons_list-2.xml";
 
 	public String getBaseURL() {
@@ -231,6 +231,7 @@ public class Main implements Runnable {
 	public static void main(String[] args) {
 		final Main main = new Main();
 		final CmdLineParser parser = new CmdLineParser(main);
+		parser.getProperties().withUsageWidth(132);
 		try {
 			parser.parseArgument(args);
 			main.run();
