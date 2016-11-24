@@ -1,11 +1,7 @@
 package com.riekr.android.sdk.downloader;
 
-import com.riekr.android.sdk.downloader.sdk.Archives;
-import com.riekr.android.sdk.downloader.sdk.SdkAddon;
-import com.riekr.android.sdk.downloader.sdk.SdkAddonsList;
-import com.riekr.android.sdk.downloader.sdk.SdkSysImg;
+import com.riekr.android.sdk.downloader.sdk.*;
 import com.riekr.android.sdk.downloader.utils.Download;
-import com.riekr.android.sdk.downloader.utils.Downloadable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
@@ -49,6 +45,12 @@ public class Main implements Runnable {
 
 	@Option(name = "--dry-run", usage = "Dumps only urls, does not download anything")
 	private boolean _dryRun = false;
+
+	@Option(name = "--xml-repository", usage = "Specify repository file with version (eg: repository-11.xml)")
+	private String _repositoryXml = "repository-11.xml";
+
+	@Option(name = "--xml-addons", usage = "Specify addons list file with version (eg: addons_list-2.xml)")
+	private String _addonsXml = "addons_list-2.xml";
 
 	public String getBaseURL() {
 		return _baseURL;
@@ -136,7 +138,13 @@ public class Main implements Runnable {
 		}
 	}
 
+	private void download(List<? extends Downloadable> downloadables) throws MalformedURLException {
+		download(null, downloadables);
+	}
+
 	private void download(String prefix, List<? extends Downloadable> downloadables) throws MalformedURLException {
+		if (prefix == null)
+			prefix = "";
 		for (Downloadable downloadable : downloadables) {
 			if (!_obsolete && downloadable.isObsolete())
 				continue;
@@ -186,7 +194,16 @@ public class Main implements Runnable {
 			dump(this);
 			if (!lock())
 				return;
-			final SdkAddonsList sdkAddonsList = unmarshal(download("addons_list-2.xml"), SdkAddonsList.class);
+			final SdkRepository sdkRepository = unmarshal(download(_repositoryXml), SdkRepository.class);
+			dump(sdkRepository);
+			download(sdkRepository.ndk);
+			download(sdkRepository.platforms);
+			download(sdkRepository.sources);
+			download(sdkRepository.buildTools);
+			download(sdkRepository.platformTools);
+			download(sdkRepository.tools);
+			download(sdkRepository.docs);
+			final SdkAddonsList sdkAddonsList = unmarshal(download(_addonsXml), SdkAddonsList.class);
 			dump(sdkAddonsList);
 			/* ADD ONS */
 			for (SdkAddonsList.AddonSite addonSite : sdkAddonsList.addonSites) {
@@ -234,6 +251,8 @@ public class Main implements Runnable {
 				", _destPath='" + _destPath + '\'' +
 				", _lock=" + _lock +
 				", _dryRun=" + _dryRun +
+				", _repositoryXml='" + _repositoryXml + '\'' +
+				", _addonsXml='" + _addonsXml + '\'' +
 				'}';
 	}
 }

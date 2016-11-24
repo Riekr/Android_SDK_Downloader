@@ -72,10 +72,10 @@ public class Download implements Runnable {
 			private long last;
 
 			private String formatSpeed(long s) {
-				if (s > 0.1 * 1024 * 1024 * 1024) {
+				if (s > 1024 * 1024 * 1024) {
 					final float f = s / 1024f / 1024f / 1024f;
 					return String.format("%.1f GB/s", f);
-				} else if (s > 0.1 * 1024 * 1024) {
+				} else if (s > 1024 * 1024) {
 					final float f = s / 1024f / 1024f;
 					return String.format("%.1f MB/s", f);
 				} else {

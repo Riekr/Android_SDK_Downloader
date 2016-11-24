@@ -6,12 +6,8 @@ import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.XmlRootElement;
 import java.util.List;
 
-@XmlRootElement(name = "sdk:archives")
-@XmlAccessorType(XmlAccessType.FIELD)
 public class Archives {
 
-	@XmlRootElement(name = "sdk:archive")
-	@XmlAccessorType(XmlAccessType.FIELD)
 	public static class Archive {
 		@XmlElement(name = "sdk:url")
 		public String url;

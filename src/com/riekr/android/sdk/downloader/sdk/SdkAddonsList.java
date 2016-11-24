@@ -10,8 +10,6 @@ import java.util.List;
 @XmlAccessorType(XmlAccessType.FIELD)
 public class SdkAddonsList {
 
-	@XmlRootElement(name = "sdk:sys-img-site")
-	@XmlAccessorType(XmlAccessType.FIELD)
 	public static class SysImgSite {
 
 		@XmlElement(name = "sdk:name")
@@ -29,8 +27,6 @@ public class SdkAddonsList {
 		}
 	}
 
-	@XmlRootElement(name = "sdk:addon-site")
-	@XmlAccessorType(XmlAccessType.FIELD)
 	public static class AddonSite {
 
 		@XmlElement(name = "sdk:name")
