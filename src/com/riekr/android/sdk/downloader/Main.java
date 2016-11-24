@@ -47,6 +47,9 @@ public class Main implements Runnable {
 	@Option(name = "--lock", usage = "Prevents multiple instances (beta)")
 	private boolean _lock = false;
 
+	@Option(name = "--dry-run", usage = "Dumps only urls, does not download anything")
+	private boolean _dryRun = false;
+
 	public String getBaseURL() {
 		return _baseURL;
 	}
@@ -87,9 +90,19 @@ public class Main implements Runnable {
 		_lock = lock;
 	}
 
+	public boolean isDryRun() {
+		return _dryRun;
+	}
+
+	public void setDryRun(boolean dryRun) {
+		_dryRun = dryRun;
+	}
+
 	private File download(String url) throws IOException {
 		final File res = File.createTempFile("asdkdl", null);
-		try (InputStream in = new URL(_baseURL + url).openConnection().getInputStream()) {
+		final String urlSpec = _baseURL + url;
+		dump("Parsing " + urlSpec);
+		try (InputStream in = new URL(urlSpec).openConnection().getInputStream()) {
 			Files.copy(in, res.toPath(), REPLACE_EXISTING);
 		}
 		return res;
@@ -130,7 +143,11 @@ public class Main implements Runnable {
 			final Archives archives = downloadable.getArchives();
 			if (archives.archives != null) {
 				for (Archives.Archive archive : archives.archives) {
-					new Download(_baseURL + prefix + archive.url).to(_destPath).mkdirs().run();
+					final String url = _baseURL + prefix + archive.url;
+					if (_dryRun)
+						System.out.println(url);
+					else
+						new Download(url).to(_destPath).mkdirs().run();
 				}
 			}
 		}
@@ -216,6 +233,7 @@ public class Main implements Runnable {
 				", _obsolete=" + _obsolete +
 				", _destPath='" + _destPath + '\'' +
 				", _lock=" + _lock +
+				", _dryRun=" + _dryRun +
 				'}';
 	}
 }
