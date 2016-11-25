@@ -5,6 +5,7 @@ import com.github.axet.wget.WGet;
 import com.github.axet.wget.info.DownloadInfo;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -17,6 +18,7 @@ public class Download implements Runnable {
 	private File _toPath;
 	private boolean _mkdirs;
 	private String _fileName;
+	private Exception _error;
 
 	public Download(String url) throws MalformedURLException {
 		this(new URL(url));
@@ -47,79 +49,91 @@ public class Download implements Runnable {
 
 	@Override
 	public void run() {
-		if (_mkdirs && !_toPath.isDirectory())
-			_toPath.mkdir();
-		// get file remote information
-		final DownloadInfo info = new DownloadInfo(_url);
-		info.extract();
-		if (_fileName == null || _fileName.isEmpty()) {
-			_fileName = info.getContentFilename();
+		try {
+			if (_mkdirs && !_toPath.isDirectory())
+				if (!_toPath.mkdir()) {
+					_error = new IOException("Unable to create destination directory: " + _toPath);
+					_error.fillInStackTrace();
+					return;
+				}
+			// get file remote information
+			final DownloadInfo info = new DownloadInfo(_url);
+			info.extract();
 			if (_fileName == null || _fileName.isEmpty()) {
-				_fileName = _url.getPath();
-				_fileName = _fileName.substring(_fileName.lastIndexOf('/') + 1);
+				_fileName = info.getContentFilename();
+				if (_fileName == null || _fileName.isEmpty()) {
+					_fileName = _url.getPath();
+					_fileName = _fileName.substring(_fileName.lastIndexOf('/') + 1);
+				}
 			}
+			final File file = new File(_toPath, _fileName);
+			// enable multipart download, breaks resume
+			//info.enableMultipart();
+			final WGet w = new WGet(info, file);
+			// single thread download. will return here only when file download
+			// is complete (or error raised).
+			final SpeedInfo speedInfo = new SpeedInfo();
+			speedInfo.start(System.currentTimeMillis());
+			w.download(_stop, new Runnable() {
+
+				private long last;
+
+				private String formatSpeed(long s) {
+					if (s > 1024 * 1024 * 1024) {
+						final float f = s / 1024f / 1024f / 1024f;
+						return String.format("%.1f GB/s", f);
+					} else if (s > 1024 * 1024) {
+						final float f = s / 1024f / 1024f;
+						return String.format("%.1f MB/s", f);
+					} else {
+						final float f = s / 1024f;
+						return String.format("%.1f kb/s", f);
+					}
+				}
+
+				@Override
+				public void run() {
+					// notify app or save download state
+					// you can extract information from DownloadInfo info;
+					switch (info.getState()) {
+						case EXTRACTING:
+						case EXTRACTING_DONE:
+							System.out.println(info.getState());
+							break;
+						case DONE:
+							// finish speed calculation by adding remaining bytes speed
+							speedInfo.end(info.getCount());
+							// print speed
+							System.out.print(String.format("\r%s\t%s average speed (%s)\n", _url, info.getState(), formatSpeed(speedInfo.getAverageSpeed())));
+							break;
+						case RETRYING:
+							System.out.println(info.getState() + " " + info.getDelay());
+							break;
+						case DOWNLOADING:
+							speedInfo.step(info.getCount());
+							final long now = System.currentTimeMillis();
+							if (now - 1000 > last) {
+								last = now;
+								final float p = (info.getCount() / (float) info.getLength()) * 100f;
+								System.out.print(String.format("\r%s\t%.2f%% (%s / %s)", _url, p,
+										formatSpeed(speedInfo.getCurrentSpeed()),
+										formatSpeed(speedInfo.getAverageSpeed())));
+							}
+							break;
+					}
+				}
+			});
+		} catch (Exception e) {
+			_error = e;
 		}
-		final File file = new File(_toPath, _fileName);
-		// enable multipart download, breaks resume
-		//info.enableMultipart();
-		final WGet w = new WGet(info, file);
-		// single thread download. will return here only when file download
-		// is complete (or error raised).
-		final SpeedInfo speedInfo = new SpeedInfo();
-		speedInfo.start(System.currentTimeMillis());
-		w.download(_stop, new Runnable() {
-
-			private long last;
-
-			private String formatSpeed(long s) {
-				if (s > 1024 * 1024 * 1024) {
-					final float f = s / 1024f / 1024f / 1024f;
-					return String.format("%.1f GB/s", f);
-				} else if (s > 1024 * 1024) {
-					final float f = s / 1024f / 1024f;
-					return String.format("%.1f MB/s", f);
-				} else {
-					final float f = s / 1024f;
-					return String.format("%.1f kb/s", f);
-				}
-			}
-
-			@Override
-			public void run() {
-				// notify app or save download state
-				// you can extract information from DownloadInfo info;
-				switch (info.getState()) {
-					case EXTRACTING:
-					case EXTRACTING_DONE:
-						System.out.println(info.getState());
-						break;
-					case DONE:
-						// finish speed calculation by adding remaining bytes speed
-						speedInfo.end(info.getCount());
-						// print speed
-						System.out.print(String.format("\r%s\t%s average speed (%s)\n", _url, info.getState(), formatSpeed(speedInfo.getAverageSpeed())));
-						break;
-					case RETRYING:
-						System.out.println(info.getState() + " " + info.getDelay());
-						break;
-					case DOWNLOADING:
-						speedInfo.step(info.getCount());
-						final long now = System.currentTimeMillis();
-						if (now - 1000 > last) {
-							last = now;
-							final float p = (info.getCount() / (float) info.getLength()) * 100f;
-							System.out.print(String.format("\r%s\t%.2f%% (%s / %s)", _url, p,
-									formatSpeed(speedInfo.getCurrentSpeed()),
-									formatSpeed(speedInfo.getAverageSpeed())));
-						}
-						break;
-				}
-			}
-		});
 	}
 
 	public void stop() {
 		_stop.set(true);
+	}
+
+	public Exception getError() {
+		return _error;
 	}
 
 	@Override

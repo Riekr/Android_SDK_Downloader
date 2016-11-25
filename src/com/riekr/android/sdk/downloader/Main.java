@@ -154,8 +154,12 @@ public class Main implements Runnable {
 					final String url = _baseURL + prefix + archive.url;
 					if (_dryRun)
 						System.out.println(url);
-					else
-						new Download(url).to(_destPath).mkdirs().run();
+					else {
+						final Download dl = new Download(url);
+						dl.to(_destPath).mkdirs().run();
+						if (dl.getError() != null)
+							System.err.println("Download failed: " + dl.getError().getLocalizedMessage());
+					}
 				}
 			}
 		}
