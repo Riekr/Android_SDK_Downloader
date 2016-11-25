@@ -1,4 +1,4 @@
-# Android_SDK_Downloader
+# Android SDK Downloader
 Simple portable utility for downloading android sdk zip files and use them on a computer with a slow connection.
 
 <h2>Rationale:</h2>
@@ -8,7 +8,7 @@ If you want to use a android sdk on a computer with a slow internet connection y
 
 On a computer with a good/flat internet connection open a console and execute:
 
-<code>java -jar "Android SDK Downloader.jar"</code>
+<code>java -jar Android_SDK_Downloader.jar</code>
 
 then wait for the downloads to complete.
 
