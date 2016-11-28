@@ -8,10 +8,7 @@ import org.kohsuke.args4j.Option;
 import org.w3c.dom.Document;
 import org.xml.sax.SAXException;
 
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.JAXBElement;
-import javax.xml.bind.JAXBException;
-import javax.xml.bind.Unmarshaller;
+import javax.xml.bind.*;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -20,37 +17,50 @@ import java.lang.management.ManagementFactory;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.file.Files;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 public class Main implements Runnable {
 
-	private static final DocumentBuilderFactory DOCUMENTBUILDERFACTORY = DocumentBuilderFactory.newInstance();
+	public enum Checksums {
+		NEVER, NEW, ALWAYS
+	}
+
+	private static final DocumentBuilderFactory	DOCUMENTBUILDERFACTORY	= DocumentBuilderFactory.newInstance();
 
 	@Option(name = "--base-url", aliases = "-U", usage = "Specify alternative google repository")
-	private String _baseURL = "https://dl.google.com/android/repository/";
+	private String															_baseURL								= "https://dl.google.com/android/repository/";
 
 	@Option(name = "--verbose", aliases = "-v", usage = "Verbose output")
-	private boolean _verbose = false;
+	private boolean															_verbose								= false;
 
 	@Option(name = "--obsolete", usage = "Download obsolete packages too")
-	private boolean _obsolete = false;
+	private boolean															_obsolete								= false;
 
 	@Option(name = "--dest", aliases = "-P", usage = "Destination path")
-	private String _destPath = "temp";
+	private String															_destPath								= "temp";
 
 	@Option(name = "--lock", usage = "Prevents multiple instances (beta)")
-	private boolean _lock = false;
+	private boolean															_lock										= false;
 
 	@Option(name = "--dry-run", usage = "Dumps only urls, does not download anything")
-	private boolean _dryRun = false;
+	private boolean															_dryRun									= false;
 
 	@Option(name = "--xml-repository", usage = "Specify repository file with version")
-	private String _repositoryXml = "repository-11.xml";
+	private String															_repositoryXml					= "repository-11.xml";
 
 	@Option(name = "--xml-addons", usage = "Specify addons list file with version")
-	private String _addonsXml = "addons_list-2.xml";
+	private String															_addonsXml							= "addons_list-2.xml";
+
+	@Option(name = "--checksums", usage = "Specify when to check file hashes")
+	private Checksums														_checksums							= Checksums.NEW;
+
+	private int																	_successes							= 0;
+	private int																	_failures								= 0;
 
 	public String getBaseURL() {
 		return _baseURL;
@@ -100,6 +110,22 @@ public class Main implements Runnable {
 		_dryRun = dryRun;
 	}
 
+	public Checksums getChecksums() {
+		return _checksums;
+	}
+
+	public void setChecksums(Checksums checksums) {
+		_checksums = checksums;
+	}
+
+	public int getSuccesses() {
+		return _successes;
+	}
+
+	public int getFailures() {
+		return _failures;
+	}
+
 	private File download(String url) throws IOException {
 		final File res = File.createTempFile("asdkdl", null);
 		final String urlSpec = _baseURL + url;
@@ -108,16 +134,6 @@ public class Main implements Runnable {
 			Files.copy(in, res.toPath(), REPLACE_EXISTING);
 		}
 		return res;
-	}
-
-	private void dump(File f) throws IOException {
-		if (!_verbose)
-			return;
-		try (BufferedReader br = new BufferedReader(new FileReader(f))) {
-			String line;
-			while ((line = br.readLine()) != null)
-				System.err.println(line);
-		}
 	}
 
 	private void dump(Object o) {
@@ -138,11 +154,11 @@ public class Main implements Runnable {
 		}
 	}
 
-	private void download(List<? extends Downloadable> downloadables) throws MalformedURLException {
+	private void download(List<? extends Downloadable> downloadables) throws MalformedURLException, NoSuchAlgorithmException {
 		download(null, downloadables);
 	}
 
-	private void download(String prefix, List<? extends Downloadable> downloadables) throws MalformedURLException {
+	private void download(String prefix, List<? extends Downloadable> downloadables) throws MalformedURLException, NoSuchAlgorithmException {
 		if (prefix == null)
 			prefix = "";
 		for (Downloadable downloadable : downloadables) {
@@ -155,14 +171,57 @@ public class Main implements Runnable {
 					if (_dryRun)
 						System.out.println(url);
 					else {
-						final Download dl = new Download(url);
-						dl.to(_destPath).mkdirs().run();
-						if (dl.getError() != null)
-							System.err.println("Download failed: " + dl.getError().getLocalizedMessage());
+						try {
+							final Download dl = new Download(url, _destPath + '/' + prefix);
+							final File output = dl.getOutput();
+							System.out.print(output + "\t(checking)");
+							if (!checkFile(output, archive, true)) {
+								dl.start();
+								if (!checkFile(output, archive, false)) {
+									System.err.println("Corrupted file: " + dl);
+									_failures++;
+								} else
+									_successes++;
+							} else {
+								System.out.println("\r" + output + "\tAlready downloaded");
+								_successes++;
+							}
+						} catch (IOException e) {
+							System.err.println("Download failed: " + e.getLocalizedMessage());
+							_failures++;
+						}
 					}
 				}
 			}
 		}
+	}
+
+	private boolean checkFile(File output, Archives.Archive archive, boolean firstRound) throws NoSuchAlgorithmException, IOException {
+		if (!output.isFile())
+			return false;
+		if (output.length() != archive.size) {
+			System.err.println("\nSize mismatch for " + output + "\nfound:    " + output.length() + "\nexpected: " + archive.size);
+			if (!firstRound)
+				if (!output.delete())
+					System.err.println("Unable to delete " + output);
+			return false;
+		}
+		if (_checksums != Checksums.NEVER && (_checksums == Checksums.ALWAYS || (_checksums == Checksums.NEW && !firstRound)) && archive.checksum != null) {
+			final MessageDigest md = MessageDigest.getInstance(archive.checksum.type);
+			final byte[] buf = new byte[65536];
+			try (InputStream is = new FileInputStream(output); DigestInputStream dis = new DigestInputStream(is, md)) {
+				//noinspection StatementWithEmptyBody
+				while (dis.read(buf) != -1);
+			}
+			final String checksum = DatatypeConverter.printHexBinary(md.digest());
+			if (!checksum.equalsIgnoreCase(archive.checksum.value)) {
+				System.err.println("\nChecksum failed for " + output + "\nfound:    " + checksum + "\nexpected: " + archive.checksum.value);
+				if (!output.delete())
+					System.err.println("Unable to delete " + output);
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private String getPrefix(String url) {
@@ -194,6 +253,7 @@ public class Main implements Runnable {
 
 	@Override
 	public void run() {
+		_successes = _failures = 0;
 		try {
 			dump(this);
 			if (!lock())
@@ -239,6 +299,11 @@ public class Main implements Runnable {
 		try {
 			parser.parseArgument(args);
 			main.run();
+			System.err.print("Successes: " + main.getSuccesses());
+			if (main.getFailures() > 0)
+				System.err.println("\tFailures: " + main.getFailures());
+			else
+				System.err.println();
 		} catch (CmdLineException e) {
 			System.err.println(e.getMessage());
 			System.err.println("java " + main.getClass().getName() + " [options...]");
@@ -258,6 +323,9 @@ public class Main implements Runnable {
 				", _dryRun=" + _dryRun +
 				", _repositoryXml='" + _repositoryXml + '\'' +
 				", _addonsXml='" + _addonsXml + '\'' +
+				", _checksums=" + _checksums +
+				", _successes=" + _successes +
+				", _failures=" + _failures +
 				'}';
 	}
 }
