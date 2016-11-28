@@ -16,7 +16,6 @@ public class Download {
 	private final URL						_url;
 	private final File					_destPath;
 	private final File					_output;
-	private final DownloadInfo	_info;
 
 	public Download(String url, String destPath) throws IOException {
 		_url = new URL(url);
@@ -25,20 +24,17 @@ public class Download {
 			if (!_destPath.mkdirs())
 				throw new IOException("Unable to create destination directory: " + _destPath);
 		// get file remote information
-		_info = new DownloadInfo(_url);
-		_info.extract();
-		String fileName = _info.getContentFilename();
-		if (fileName == null || fileName.isEmpty()) {
-			fileName = _url.getPath();
-			fileName = fileName.substring(fileName.lastIndexOf('/') + 1);
-		}
+		String fileName = _url.getPath();
+		fileName = fileName.substring(fileName.lastIndexOf('/') + 1);
 		_output = new File(_destPath, fileName);
 	}
 
 	public void start() {
+		final DownloadInfo info = new DownloadInfo(_url);
+		info.extract();
 		// enable multipart download, breaks resume
 		//_info.enableMultipart();
-		final WGet w = new WGet(_info, _output);
+		final WGet w = new WGet(info, _output);
 		// single thread download. will return here only when file download
 		// is complete (or error raised).
 		final SpeedInfo speedInfo = new SpeedInfo();
@@ -64,26 +60,26 @@ public class Download {
 			public void run() {
 				// notify app or save download state
 				// you can extract information from DownloadInfo _info;
-				switch (_info.getState()) {
+				switch (info.getState()) {
 					case EXTRACTING :
 					case EXTRACTING_DONE :
-						System.out.println(_info.getState());
+						System.out.println(info.getState());
 						break;
 					case DONE :
 						// finish speed calculation by adding remaining bytes speed
-						speedInfo.end(_info.getCount());
+						speedInfo.end(info.getCount());
 						// print speed
-						System.out.print(String.format("\r%s\t%s average speed (%s)\n", _url, _info.getState(), formatSpeed(speedInfo.getAverageSpeed())));
+						System.out.print(String.format("\r%s\t%s average speed (%s)\n", _url, info.getState(), formatSpeed(speedInfo.getAverageSpeed())));
 						break;
 					case RETRYING :
-						System.out.println(_info.getState() + " " + _info.getDelay());
+						System.out.println(info.getState() + " " + info.getDelay());
 						break;
 					case DOWNLOADING :
-						speedInfo.step(_info.getCount());
+						speedInfo.step(info.getCount());
 						final long now = System.currentTimeMillis();
 						if (now - 1000 > last) {
 							last = now;
-							final float p = (_info.getCount() / (float)_info.getLength()) * 100f;
+							final float p = (info.getCount() / (float)info.getLength()) * 100f;
 							System.out.print(String.format("\r%s\t%.2f%% (%s / %s)", _url, p,
 									formatSpeed(speedInfo.getCurrentSpeed()),
 									formatSpeed(speedInfo.getAverageSpeed())));
@@ -109,7 +105,6 @@ public class Download {
 				", _url=" + _url +
 				", _destPath=" + _destPath +
 				", _output=" + _output +
-				", _info=" + _info +
 				'}';
 	}
 }

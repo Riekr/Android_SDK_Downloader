@@ -59,6 +59,9 @@ public class Main implements Runnable {
 	@Option(name = "--checksums", usage = "Specify when to check file hashes")
 	private Checksums														_checksums							= Checksums.NEW;
 
+	@Option(name = "--retries", aliases = "-R", usage = "Specify number of retries")
+	private int																	_retries								= 2;
+
 	private int																	_successes							= 0;
 	private int																	_failures								= 0;
 
@@ -118,6 +121,14 @@ public class Main implements Runnable {
 		_checksums = checksums;
 	}
 
+	public int getRetries() {
+		return _retries;
+	}
+
+	public void setRetries(int retries) {
+		_retries = retries;
+	}
+
 	public int getSuccesses() {
 		return _successes;
 	}
@@ -175,16 +186,23 @@ public class Main implements Runnable {
 							final Download dl = new Download(url, _destPath + '/' + prefix);
 							final File output = dl.getOutput();
 							System.out.print(output + "\t(checking)");
-							if (!checkFile(output, archive, true)) {
-								dl.start();
-								if (!checkFile(output, archive, false)) {
-									System.err.println("Corrupted file: " + dl);
-									_failures++;
-								} else
-									_successes++;
-							} else {
+							int trials = 1 + Math.max(0, _retries);
+							if (checkFile(output, archive, true)) {
 								System.out.println("\r" + output + "\tAlready downloaded");
 								_successes++;
+							} else {
+								boolean success;
+								do {
+									dl.start();
+									success = checkFile(output, archive, false);
+									trials--;
+								} while (!success && trials > 0);
+								if (success) {
+									_successes++;
+								} else {
+									System.err.println("Corrupted file: " + dl);
+									_failures++;
+								}
 							}
 						} catch (IOException e) {
 							System.err.println("Download failed: " + e.getLocalizedMessage());
@@ -194,6 +212,7 @@ public class Main implements Runnable {
 				}
 			}
 		}
+
 	}
 
 	private boolean checkFile(File output, Archives.Archive archive, boolean firstRound) throws NoSuchAlgorithmException, IOException {
@@ -324,6 +343,7 @@ public class Main implements Runnable {
 				", _repositoryXml='" + _repositoryXml + '\'' +
 				", _addonsXml='" + _addonsXml + '\'' +
 				", _checksums=" + _checksums +
+				", _retries=" + _retries +
 				", _successes=" + _successes +
 				", _failures=" + _failures +
 				'}';
