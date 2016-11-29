@@ -1,30 +1,35 @@
 package com.riekr.android.sdk.downloader;
 
-import com.riekr.android.sdk.downloader.sdk.*;
-import com.riekr.android.sdk.downloader.utils.Download;
-import org.kohsuke.args4j.CmdLineException;
-import org.kohsuke.args4j.CmdLineParser;
-import org.kohsuke.args4j.Option;
-import org.w3c.dom.Document;
-import org.xml.sax.SAXException;
+import java.io.*;
+import java.lang.management.ManagementFactory;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.List;
 
 import javax.xml.bind.*;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-import java.io.*;
-import java.lang.management.ManagementFactory;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.nio.file.Files;
-import java.security.DigestInputStream;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.List;
 
-import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
+import org.kohsuke.args4j.Argument;
+import org.kohsuke.args4j.CmdLineException;
+import org.kohsuke.args4j.CmdLineParser;
+import org.kohsuke.args4j.Option;
+import org.littleshoot.proxy.impl.DefaultHttpProxyServer;
+import org.w3c.dom.Document;
+import org.xml.sax.SAXException;
 
-public class Main implements Runnable {
+import com.github.axet.wget.WGet;
+import com.github.axet.wget.info.ex.DownloadIOError;
+import com.riekr.android.sdk.downloader.sdk.*;
+import com.riekr.android.sdk.downloader.serve.SdkServeHttpFiltersSourceAdapter;
+import com.riekr.android.sdk.downloader.utils.Download;
+
+public class Main {
 
 	public enum Checksums {
 		NEVER, NEW, ALWAYS
@@ -61,6 +66,13 @@ public class Main implements Runnable {
 
 	@Option(name = "--retries", aliases = "-R", usage = "Specify number of retries")
 	private int																	_retries								= 2;
+
+	@Option(name = "--serve-port", usage = "Specify tcp port for proxy server when using \"serve\" argument")
+	private int																	_servePort							= 8080;
+
+	@Argument
+	@SuppressWarnings({"FieldNotUsedInToString", "MismatchedQueryAndUpdateOfCollection"})
+	private List<String>												_args										= new ArrayList<>();
 
 	private int																	_successes							= 0;
 	private int																	_failures								= 0;
@@ -137,13 +149,17 @@ public class Main implements Runnable {
 		return _failures;
 	}
 
-	private File download(String url) throws IOException {
-		final File res = File.createTempFile("asdkdl", null);
-		final String urlSpec = _baseURL + url;
-		dump("Parsing " + urlSpec);
-		try (InputStream in = new URL(urlSpec).openConnection().getInputStream()) {
-			Files.copy(in, res.toPath(), REPLACE_EXISTING);
+	private File download(String fileName) throws IOException {
+		File res = new File(_destPath, fileName);
+		if (res.isFile()) {
+			if (!res.delete()) {
+				System.err.println("Unable to delete " + res);
+				System.exit(-1);
+			}
 		}
+		final URL urlSpec = new URL(_baseURL + fileName);
+		dump("Parsing " + urlSpec);
+		new WGet(urlSpec, res).download();
 		return res;
 	}
 
@@ -193,8 +209,13 @@ public class Main implements Runnable {
 							} else {
 								boolean success;
 								do {
-									dl.start();
-									success = checkFile(output, archive, false);
+									try {
+										dl.start();
+										success = checkFile(output, archive, false);
+									} catch (DownloadIOError e) {
+										success = false;
+										System.out.println("\r" + output + "\tDownload failed");
+									}
 									trials--;
 								} while (!success && trials > 0);
 								if (success) {
@@ -270,8 +291,7 @@ public class Main implements Runnable {
 		return true;
 	}
 
-	@Override
-	public void run() {
+	public void update() {
 		_successes = _failures = 0;
 		try {
 			dump(this);
@@ -309,6 +329,24 @@ public class Main implements Runnable {
 		} catch (Exception e) {
 			e.printStackTrace(System.err);
 		}
+		System.err.print("Successes: " + _successes);
+		if (_failures > 0)
+			System.err.println("\tFailures: " + _failures);
+		else
+			System.err.println();
+	}
+
+	public void serve() {
+		final String baseURL;
+		if (_baseURL.toLowerCase().startsWith("https://")) {
+			baseURL = "http://" + _baseURL.substring(8);
+		} else
+			baseURL = _baseURL;
+		System.err.println("Serving sdk via proxy on port " + _servePort + " for " + baseURL);
+		DefaultHttpProxyServer.bootstrap()
+				.withPort(8080)
+				.withFiltersSource(new SdkServeHttpFiltersSourceAdapter(_destPath, baseURL))
+				.start();
 	}
 
 	public static void main(String[] args) {
@@ -317,12 +355,20 @@ public class Main implements Runnable {
 		parser.getProperties().withUsageWidth(132);
 		try {
 			parser.parseArgument(args);
-			main.run();
-			System.err.print("Successes: " + main.getSuccesses());
-			if (main.getFailures() > 0)
-				System.err.println("\tFailures: " + main.getFailures());
-			else
-				System.err.println();
+			if (main._args.isEmpty())
+				main.update();
+			else {
+				for (String cmd : main._args) {
+					switch (cmd.toUpperCase()) {
+						case "UPDATE" :
+							main.update();
+							break;
+						case "SERVE" :
+							main.serve();
+							break;
+					}
+				}
+			}
 		} catch (CmdLineException e) {
 			System.err.println(e.getMessage());
 			System.err.println("java " + main.getClass().getName() + " [options...]");
@@ -344,6 +390,8 @@ public class Main implements Runnable {
 				", _addonsXml='" + _addonsXml + '\'' +
 				", _checksums=" + _checksums +
 				", _retries=" + _retries +
+				", _servePort=" + _servePort +
+				", _args=" + _args +
 				", _successes=" + _successes +
 				", _failures=" + _failures +
 				'}';
