@@ -8,6 +8,7 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import javax.xml.bind.*;
@@ -29,10 +30,20 @@ import com.riekr.android.sdk.downloader.sdk.*;
 import com.riekr.android.sdk.downloader.serve.SdkServeHttpFiltersSourceAdapter;
 import com.riekr.android.sdk.downloader.utils.Download;
 
-public class Main {
+public class Main implements Runnable {
+
+	private Main() {}
+
+	public Main(Action... actions) {
+		_actions = Arrays.asList(actions);
+	}
 
 	public enum Checksums {
 		NEVER, NEW, ALWAYS
+	}
+
+	public enum Action {
+		UPDATE, SERVE, HELP
 	}
 
 	private static final DocumentBuilderFactory	DOCUMENTBUILDERFACTORY	= DocumentBuilderFactory.newInstance();
@@ -70,9 +81,8 @@ public class Main {
 	@Option(name = "--serve-port", usage = "Specify tcp port for proxy server when using \"serve\" argument")
 	private int																	_servePort							= 8080;
 
-	@Argument
-	@SuppressWarnings({"FieldNotUsedInToString", "MismatchedQueryAndUpdateOfCollection"})
-	private List<String>												_args										= new ArrayList<>();
+	@Argument(hidden = true)
+	private List<Action>												_actions								= new ArrayList<>();
 
 	private int																	_successes							= 0;
 	private int																	_failures								= 0;
@@ -147,6 +157,10 @@ public class Main {
 
 	public int getFailures() {
 		return _failures;
+	}
+
+	public List<Action> getActions() {
+		return _actions;
 	}
 
 	private File download(String fileName) throws IOException {
@@ -349,31 +363,60 @@ public class Main {
 				.start();
 	}
 
+	public void run() {
+		for (Action action : _actions) {
+			switch (action) {
+				case UPDATE :
+					update();
+					break;
+				case SERVE :
+					serve();
+					break;
+				case HELP :
+					// ignored if not from command line
+					break;
+			}
+		}
+	}
+
+	private static void printHelp(CmdLineParser parser, PrintStream out) {
+		parser.getProperties().withUsageWidth(132);
+		out.println("java " + Main.class.getName() + " [options...] " + Arrays.toString(Action.values()).replace(", ", "|"));
+		out.println("Actions:");
+		for (Action action : Action.values()) {
+			out.print(" " + action + "\t");
+			switch (action) {
+				case HELP :
+					out.println(" : Shows this help screen");
+					break;
+				case SERVE :
+					out.println(" : Serves android sdk through embedded proxy");
+					break;
+				case UPDATE :
+					out.println(" : Updates local android sdk cache from internet");
+					break;
+			}
+		}
+		out.println("Options:");
+		parser.printUsage(out);
+		out.println();
+	}
+
 	public static void main(String[] args) {
 		final Main main = new Main();
 		final CmdLineParser parser = new CmdLineParser(main);
-		parser.getProperties().withUsageWidth(132);
 		try {
 			parser.parseArgument(args);
-			if (main._args.isEmpty())
-				main.update();
-			else {
-				for (String cmd : main._args) {
-					switch (cmd.toUpperCase()) {
-						case "UPDATE" :
-							main.update();
-							break;
-						case "SERVE" :
-							main.serve();
-							break;
-					}
-				}
+			if (main._actions.isEmpty())
+				main._actions.add(Action.UPDATE);
+			else if (main._actions.contains(Action.HELP)) {
+				printHelp(parser, System.out);
+				return;
 			}
+			main.run();
 		} catch (CmdLineException e) {
 			System.err.println(e.getMessage());
-			System.err.println("java " + main.getClass().getName() + " [options...]");
-			parser.printUsage(System.err);
-			System.err.println();
+			printHelp(parser, System.err);
 		}
 	}
 
@@ -391,7 +434,7 @@ public class Main {
 				", _checksums=" + _checksums +
 				", _retries=" + _retries +
 				", _servePort=" + _servePort +
-				", _args=" + _args +
+				", _actions=" + _actions +
 				", _successes=" + _successes +
 				", _failures=" + _failures +
 				'}';
