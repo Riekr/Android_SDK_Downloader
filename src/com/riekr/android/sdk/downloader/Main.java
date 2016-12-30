@@ -11,24 +11,20 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import javax.xml.bind.*;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.bind.DatatypeConverter;
 
 import org.kohsuke.args4j.Argument;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.littleshoot.proxy.impl.DefaultHttpProxyServer;
-import org.w3c.dom.Document;
-import org.xml.sax.SAXException;
 
 import com.github.axet.wget.WGet;
 import com.github.axet.wget.info.ex.DownloadIOError;
 import com.riekr.android.sdk.downloader.sdk.*;
 import com.riekr.android.sdk.downloader.serve.SdkServeHttpFiltersSourceAdapter;
 import com.riekr.android.sdk.downloader.utils.Download;
+import com.riekr.android.sdk.downloader.utils.Xml;
 
 public class Main implements Runnable {
 
@@ -46,46 +42,44 @@ public class Main implements Runnable {
 		UPDATE, SERVE, HELP
 	}
 
-	private static final DocumentBuilderFactory	DOCUMENTBUILDERFACTORY	= DocumentBuilderFactory.newInstance();
-
 	@Option(name = "--base-url", aliases = "-U", usage = "Specify alternative google repository")
-	private String															_baseURL								= "https://dl.google.com/android/repository/";
+	private String				_baseURL				= "https://dl.google.com/android/repository/";
 
 	@Option(name = "--verbose", aliases = "-v", usage = "Verbose output")
-	private boolean															_verbose								= false;
+	private boolean				_verbose				= false;
 
 	@Option(name = "--obsolete", usage = "Download obsolete packages too")
-	private boolean															_obsolete								= false;
+	private boolean				_obsolete				= false;
 
 	@Option(name = "--dest", aliases = "-P", usage = "Destination path")
-	private String															_destPath								= "temp";
+	private String				_destPath				= "temp";
 
 	@Option(name = "--lock", usage = "Prevents multiple instances (beta)")
-	private boolean															_lock										= false;
+	private boolean				_lock						= false;
 
 	@Option(name = "--dry-run", usage = "Dumps only urls, does not download anything")
-	private boolean															_dryRun									= false;
+	private boolean				_dryRun					= false;
 
 	@Option(name = "--xml-repository", usage = "Specify repository file with version")
-	private String															_repositoryXml					= "repository-11.xml";
+	private String				_repositoryXml	= "repository-11.xml";
 
 	@Option(name = "--xml-addons", usage = "Specify addons list file with version")
-	private String															_addonsXml							= "addons_list-2.xml";
+	private String				_addonsXml			= "addons_list-2.xml";
 
 	@Option(name = "--checksums", usage = "Specify when to check file hashes")
-	private Checksums														_checksums							= Checksums.NEW;
+	private Checksums			_checksums			= Checksums.NEW;
 
 	@Option(name = "--retries", aliases = "-R", usage = "Specify number of retries")
-	private int																	_retries								= 2;
+	private int						_retries				= 2;
 
 	@Option(name = "--serve-port", usage = "Specify tcp port for proxy server when using \"serve\" argument")
-	private int																	_servePort							= 8080;
+	private int						_servePort			= 8080;
 
 	@Argument(hidden = true)
-	private List<Action>												_actions								= new ArrayList<>();
+	private List<Action>	_actions				= new ArrayList<>();
 
-	private int																	_successes							= 0;
-	private int																	_failures								= 0;
+	private int						_successes			= 0;
+	private int						_failures				= 0;
 
 	public String getBaseURL() {
 		return _baseURL;
@@ -183,30 +177,20 @@ public class Main implements Runnable {
 		System.err.println(o);
 	}
 
-	private <T> T unmarshal(File file, Class<T> clazz) throws IOException, ParserConfigurationException, SAXException, JAXBException {
-		try (InputStream is = new FileInputStream(file)) {
-			final DocumentBuilder docBuilder = DOCUMENTBUILDERFACTORY.newDocumentBuilder();
-			final Document document = docBuilder.parse(is);
-			final org.w3c.dom.Element varElement = document.getDocumentElement();
-			final JAXBContext context = JAXBContext.newInstance(clazz);
-			final Unmarshaller unmarshaller = context.createUnmarshaller();
-			final JAXBElement<T> loader = unmarshaller.unmarshal(varElement, clazz);
-			return loader.getValue();
-		}
-	}
-
 	private void download(List<? extends Downloadable> downloadables) throws MalformedURLException, NoSuchAlgorithmException {
 		download(null, downloadables);
 	}
 
 	private void download(String prefix, List<? extends Downloadable> downloadables) throws MalformedURLException, NoSuchAlgorithmException {
+		if (downloadables == null || downloadables.isEmpty())
+			return;
 		if (prefix == null)
 			prefix = "";
 		for (Downloadable downloadable : downloadables) {
 			if (!_obsolete && downloadable.isObsolete())
 				continue;
 			final Archives archives = downloadable.getArchives();
-			if (archives.archives != null) {
+			if (archives != null && archives.archives != null) {
 				for (Archives.Archive archive : archives.archives) {
 					final String url = _baseURL + prefix + archive.url;
 					if (_dryRun)
@@ -311,20 +295,15 @@ public class Main implements Runnable {
 			dump(this);
 			if (!lock())
 				return;
-			final SdkRepository sdkRepository = unmarshal(download(_repositoryXml), SdkRepository.class);
+			final SdkRepository sdkRepository = Xml.unmarshal(download(_repositoryXml), SdkRepository.class);
 			dump(sdkRepository);
-			download(sdkRepository.ndk);
-			download(sdkRepository.platforms);
-			download(sdkRepository.sources);
-			download(sdkRepository.buildTools);
-			download(sdkRepository.platformTools);
-			download(sdkRepository.tools);
-			download(sdkRepository.docs);
-			final SdkAddonsList sdkAddonsList = unmarshal(download(_addonsXml), SdkAddonsList.class);
+			for (List<Downloadable> downloadables : sdkRepository.collect())
+				download(downloadables);
+			final SdkAddonsList sdkAddonsList = Xml.unmarshal(download(_addonsXml), SdkAddonsList.class);
 			dump(sdkAddonsList);
 			/* ADD ONS */
 			for (SdkAddonsList.AddonSite addonSite : sdkAddonsList.addonSites) {
-				final SdkAddon sdkAddon = unmarshal(download(addonSite.url), SdkAddon.class);
+				final SdkAddon sdkAddon = Xml.unmarshal(download(addonSite.url), SdkAddon.class);
 				dump(sdkAddon);
 				final String prefix = getPrefix(addonSite.url);
 				if (sdkAddon.addOns != null)
@@ -334,7 +313,7 @@ public class Main implements Runnable {
 			}
 			/* SYSTEM IMAGES */
 			for (SdkAddonsList.SysImgSite sysImgSite : sdkAddonsList.sysImgSites) {
-				final SdkSysImg sdkSysImg = unmarshal(download(sysImgSite.url), SdkSysImg.class);
+				final SdkSysImg sdkSysImg = Xml.unmarshal(download(sysImgSite.url), SdkSysImg.class);
 				dump(sdkSysImg);
 				final String prefix = getPrefix(sysImgSite.url);
 				if (sdkSysImg.systemImages != null)

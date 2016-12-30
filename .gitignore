@@ -3,3 +3,4 @@ lib/*.jar
 temp/
 out/
 .idea/workspace.xml
+.idea/dbnavigator.xml
