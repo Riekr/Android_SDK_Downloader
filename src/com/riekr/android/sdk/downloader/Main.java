@@ -2,14 +2,11 @@ package com.riekr.android.sdk.downloader;
 
 import java.io.*;
 import java.lang.management.ManagementFactory;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 import javax.xml.bind.DatatypeConverter;
 
@@ -39,7 +36,7 @@ public class Main implements Runnable {
 	}
 
 	public enum Action {
-		UPDATE, SERVE, HELP
+		UPDATE, PRUNE, SERVE, HELP
 	}
 
 	@Option(name = "--base-url", aliases = "-U", usage = "Specify alternative google repository")
@@ -157,17 +154,19 @@ public class Main implements Runnable {
 		return _actions;
 	}
 
-	private File download(String fileName) throws IOException {
+	private File download(String fileName, Set<File> relevantFiles) throws IOException {
 		File res = new File(_destPath, fileName);
 		if (res.isFile()) {
 			if (!res.delete()) {
 				System.err.println("Unable to delete " + res);
 				System.exit(-1);
+				return null;
 			}
 		}
 		final URL urlSpec = new URL(_baseURL + fileName);
 		dump("Parsing " + urlSpec);
 		new WGet(urlSpec, res).download();
+		relevantFiles.add(res);
 		return res;
 	}
 
@@ -177,11 +176,23 @@ public class Main implements Runnable {
 		System.err.println(o);
 	}
 
-	private void download(List<? extends Downloadable> downloadables) throws MalformedURLException, NoSuchAlgorithmException {
-		download(null, downloadables);
+	private Download getDownload(String prefix, Archives.Archive archive) throws IOException {
+		final URL url = new URL(_baseURL + prefix + archive.url);
+		String fileName = url.getPath();
+		fileName = fileName.substring(fileName.lastIndexOf('/') + 1);
+		final File output = new File(_destPath + '/' + prefix, fileName);
+		final File destPath = output.getParentFile();
+		if (!destPath.isDirectory())
+			if (!destPath.mkdirs())
+				throw new IOException("Unable to create destination directory: " + destPath);
+		return new Download(url, output);
 	}
 
-	private void download(String prefix, List<? extends Downloadable> downloadables) throws MalformedURLException, NoSuchAlgorithmException {
+	private void download(List<? extends Downloadable> downloadables, Set<File> relevantFiles) throws IOException, NoSuchAlgorithmException {
+		download(null, downloadables, relevantFiles);
+	}
+
+	private void download(String prefix, List<? extends Downloadable> downloadables, Set<File> relevantFiles) throws IOException, NoSuchAlgorithmException {
 		if (downloadables == null || downloadables.isEmpty())
 			return;
 		if (prefix == null)
@@ -192,34 +203,33 @@ public class Main implements Runnable {
 			final Archives archives = downloadable.getArchives();
 			if (archives != null && archives.archives != null) {
 				for (Archives.Archive archive : archives.archives) {
-					final String url = _baseURL + prefix + archive.url;
+					final Download download = getDownload(prefix, archive);
+					relevantFiles.add(download.output);
 					if (_dryRun)
-						System.out.println(url);
+						System.out.println(download.url);
 					else {
 						try {
-							final Download dl = new Download(url, _destPath + '/' + prefix);
-							final File output = dl.getOutput();
-							System.out.print(output + "\t(checking)");
+							System.out.print(download.output + "\t(checking)");
 							int trials = 1 + Math.max(0, _retries);
-							if (checkFile(output, archive, true)) {
-								System.out.println("\r" + output + "\tAlready downloaded");
+							if (checkFile(download.output, archive, true)) {
+								System.out.println("\r" + download.output + "\tAlready downloaded");
 								_successes++;
 							} else {
 								boolean success;
 								do {
 									try {
-										dl.start();
-										success = checkFile(output, archive, false);
+										download.start();
+										success = checkFile(download.output, archive, false);
 									} catch (DownloadIOError e) {
 										success = false;
-										System.out.println("\r" + output + "\tDownload failed");
+										System.out.println("\r" + download.output + "\tDownload failed");
 									}
 									trials--;
 								} while (!success && trials > 0);
 								if (success) {
 									_successes++;
 								} else {
-									System.err.println("Corrupted file: " + dl);
+									System.err.println("Corrupted file: " + download);
 									_failures++;
 								}
 							}
@@ -289,35 +299,36 @@ public class Main implements Runnable {
 		return true;
 	}
 
-	public void update() {
+	public Set<File> update() {
+		final Set<File> relevantFiles = new HashSet<>(250);
 		_successes = _failures = 0;
 		try {
 			dump(this);
 			if (!lock())
-				return;
-			final SdkRepository sdkRepository = Xml.unmarshal(download(_repositoryXml), SdkRepository.class);
+				return null;
+			final SdkRepository sdkRepository = Xml.unmarshal(download(_repositoryXml, relevantFiles), SdkRepository.class);
 			dump(sdkRepository);
 			for (List<Downloadable> downloadables : sdkRepository.collect())
-				download(downloadables);
-			final SdkAddonsList sdkAddonsList = Xml.unmarshal(download(_addonsXml), SdkAddonsList.class);
+				download(downloadables, relevantFiles);
+			final SdkAddonsList sdkAddonsList = Xml.unmarshal(download(_addonsXml, relevantFiles), SdkAddonsList.class);
 			dump(sdkAddonsList);
 			/* ADD ONS */
 			for (SdkAddonsList.AddonSite addonSite : sdkAddonsList.addonSites) {
-				final SdkAddon sdkAddon = Xml.unmarshal(download(addonSite.url), SdkAddon.class);
+				final SdkAddon sdkAddon = Xml.unmarshal(download(addonSite.url, relevantFiles), SdkAddon.class);
 				dump(sdkAddon);
 				final String prefix = getPrefix(addonSite.url);
 				if (sdkAddon.addOns != null)
-					download(prefix, sdkAddon.addOns);
+					download(prefix, sdkAddon.addOns, relevantFiles);
 				if (sdkAddon.extras != null)
-					download(prefix, sdkAddon.extras);
+					download(prefix, sdkAddon.extras, relevantFiles);
 			}
 			/* SYSTEM IMAGES */
 			for (SdkAddonsList.SysImgSite sysImgSite : sdkAddonsList.sysImgSites) {
-				final SdkSysImg sdkSysImg = Xml.unmarshal(download(sysImgSite.url), SdkSysImg.class);
+				final SdkSysImg sdkSysImg = Xml.unmarshal(download(sysImgSite.url, relevantFiles), SdkSysImg.class);
 				dump(sdkSysImg);
 				final String prefix = getPrefix(sysImgSite.url);
 				if (sdkSysImg.systemImages != null)
-					download(prefix, sdkSysImg.systemImages);
+					download(prefix, sdkSysImg.systemImages, relevantFiles);
 			}
 		} catch (Exception e) {
 			e.printStackTrace(System.err);
@@ -327,6 +338,7 @@ public class Main implements Runnable {
 			System.err.println("\tFailures: " + _failures);
 		else
 			System.err.println();
+		return relevantFiles;
 	}
 
 	public void serve() {
@@ -342,11 +354,50 @@ public class Main implements Runnable {
 				.start();
 	}
 
+	public void prune(Set<File> relevantFiles) {
+		prune(relevantFiles, new File(_destPath));
+	}
+
+	private void prune(Set<File> relevantFiles, File dir) {
+		final File[] files = dir.listFiles();
+		if (files == null)
+			return;
+		for (File file : files) {
+			if (file.isDirectory())
+				prune(relevantFiles, file);
+			if (file.isDirectory()) {
+				final File[] childs = file.listFiles();
+				if (childs == null || childs.length == 0) {
+					if (_dryRun)
+						System.out.println("Deleting directory " + file);
+					else if (!file.delete())
+						System.err.println("e: unable to delete directory " + file);
+				}
+			} else if (!relevantFiles.contains(file)) {
+				if (_dryRun)
+					System.out.println("Deleting " + file);
+				else if (!file.delete())
+					System.err.println("e: unable to delete " + file);
+			} else if (_verbose) {
+				System.out.println("Keeping " + file);
+			}
+		}
+	}
+
 	public void run() {
+		Collections.sort(_actions);
+		Set<File> relevantFiles = null;
 		for (Action action : _actions) {
 			switch (action) {
 				case UPDATE :
-					update();
+					relevantFiles = update();
+					break;
+				case PRUNE :
+					if (relevantFiles == null || relevantFiles.isEmpty()) {
+						System.err.println("w: PRUNE did not get any relevant file to keep, did UPDATE run?");
+						break;
+					}
+					prune(relevantFiles);
 					break;
 				case SERVE :
 					serve();
@@ -367,6 +418,9 @@ public class Main implements Runnable {
 			switch (action) {
 				case HELP :
 					out.println(" : Shows this help screen");
+					break;
+				case PRUNE :
+					out.println(" : Remove files no more relevant from cache");
 					break;
 				case SERVE :
 					out.println(" : Serves android sdk through embedded proxy");
